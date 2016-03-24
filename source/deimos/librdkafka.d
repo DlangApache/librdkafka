@@ -41,6 +41,7 @@
 
 
 /* @cond NO_DOC */
+module deimos.librdkafka;
 
 import core.stdc.stdio;
 import core.stdc.ctype;
@@ -54,8 +55,6 @@ version(Windows){
 }
 
 extern(C) :
-nothrow :
-@nogc :
 
 
 /*#ifdef _MSC_VER
@@ -1706,7 +1705,6 @@ ssize_t rd_kafka_consume_batch_queue(rd_kafka_queue_t *rkqu,
  *
  * @sa rd_kafka_consume_callback()
  */
-alias 
 int rd_kafka_consume_callback_queue(rd_kafka_queue_t *rkqu,int timeout_ms,
 				     void function(rd_kafka_message_t *rkmessage,void *opaque) consume_cb,
 				     void *opaque);
