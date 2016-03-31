@@ -1,0 +1,5 @@
+*.a
+dub.selections.json
+.dub
+*.kate-swp
+.directory

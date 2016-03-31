@@ -1,0 +1,14 @@
+{
+    "name": "librdkafka", 
+    "description": "rdkafka C header build in D", 
+    "copyright": "Copyright © 2016 DlangApache", 
+    "homepage": "https://github.com/edenhill/librdkafka", 
+    "license": "Apache", 
+    "authors": [
+        "Deimos"
+    ], 
+    "libs": [
+        "rdkafka"
+    ]
+}
+
