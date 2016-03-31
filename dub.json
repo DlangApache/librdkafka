@@ -1,0 +1,9 @@
+{
+	"name": "rdkafka",
+	"description": "Interface to the rdkafka library",
+	"copyright": "Copyright © 2016 dushibaiyu",
+	"homepage": "https://github.com/edenhill/librdkafka",
+	"license": "ASL-2.0",
+	"authors": ["dushibaiyu"],
+	"libs": ["rdkafka"]
+}

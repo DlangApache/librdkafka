@@ -1,7 +1,0 @@
-name "librdkafka"
-description "rdkafka C header build in D"
-copyright "Copyright © 2016, dushibaiyu"
-homepage "https://github.com/edenhill/librdkafka"
-license "Apache"
-authors "Deimos"
-libs "rdkafka"
