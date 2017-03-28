@@ -50,30 +50,16 @@ import core.stdc.inttypes;
 import core.sys.posix.sys.types;
 //#include <inttypes.h>
 //#include <sys/types.h>
-version(Windows){
+version(Windows)
+{
 	import core.sys.windows.basetsd;
+}
+else
+{
+	import core.sys.posix.sys.socket;
 }
 
 extern(C) nothrow @nogc:
-
-
-/*#ifdef _MSC_VER
-#include <basetsd.h>
-typedef SSIZE_T ssize_t;
-#define RD_UNUSED
-#define RD_DEPRECATED
-#undef 
-#ifdef LIBRDKAFKA_EXPORTS
-#define  __declspec(dllexport)
-#else
-#define  __declspec(dllimport)
-#endif
-
-#else
-#define RD_UNUSED __attribute__((unused))
-#define 
-#define RD_DEPRECATED __attribute__((deprecated))
-#endif*/
 
 /* @endcond */
 
@@ -263,6 +249,10 @@ enum  rd_kafka_resp_err_t {
 	RD_KAFKA_RESP_ERR__OUTDATED = -167,
 	/** Timed out in queue */
 	RD_KAFKA_RESP_ERR__TIMED_OUT_QUEUE = -166,
+	/** Feature not supported by broker */
+	RD_KAFKA_RESP_ERR__UNSUPPORTED_FEATURE = -165,
+	/** Awaiting cache update */
+	RD_KAFKA_RESP_ERR__WAIT_CACHE = -164,
 
 	/** End internal error codes */
 	RD_KAFKA_RESP_ERR__END = -100,
@@ -342,7 +332,23 @@ enum  rd_kafka_resp_err_t {
 	RD_KAFKA_RESP_ERR_ILLEGAL_SASL_STATE = 34,
 	/** Unuspported version */
 	RD_KAFKA_RESP_ERR_UNSUPPORTED_VERSION = 35,
-	
+	/** Topic already exists */
+	RD_KAFKA_RESP_ERR_TOPIC_ALREADY_EXISTS = 36,
+	/** Invalid number of partitions */
+	RD_KAFKA_RESP_ERR_INVALID_PARTITIONS = 37,
+	/** Invalid replication factor */
+	RD_KAFKA_RESP_ERR_INVALID_REPLICATION_FACTOR = 38,
+	/** Invalid replica assignment */
+	RD_KAFKA_RESP_ERR_INVALID_REPLICA_ASSIGNMENT = 39,
+	/** Invalid config */
+	RD_KAFKA_RESP_ERR_INVALID_CONFIG = 40,
+	/** Not controller for cluster */
+	RD_KAFKA_RESP_ERR_NOT_CONTROLLER = 41,
+	/** Invalid request */
+	RD_KAFKA_RESP_ERR_INVALID_REQUEST = 42,
+	/** Message format on broker does not support request */
+	RD_KAFKA_RESP_ERR_UNSUPPORTED_FOR_MESSAGE_FORMAT = 43,
+
 	RD_KAFKA_RESP_ERR_END_ALL,
 } 
 
@@ -621,6 +627,43 @@ rd_kafka_topic_partition_list_find (rd_kafka_topic_partition_list_t *rktparlist,
 /**@}*/
 
 
+/**
+ * @brief Sort list using comparator \p cmp.
+ *
+ * If \p cmp is NULL the default comparator will be used that
+ * sorts by ascending topic name and partition.
+ *
+ */
+void
+rd_kafka_topic_partition_list_sort (rd_kafka_topic_partition_list_t* rktparlist,
+                                    int function (const void *a, const void *b,
+                                                void *opaque) cmp,
+                                    void *opaque);
+
+/**
+ * @name Var-arg tag types
+ * @{
+ *
+ */
+
+/**
+ * @enum rd_kafka_vtype_t
+ *
+ * @brief Var-arg tag types
+ *
+ * @sa rd_kafka_producev()
+ */
+enum rd_kafka_vtype_t {
+        RD_KAFKA_VTYPE_END,       /**< va-arg sentinel */
+        RD_KAFKA_VTYPE_TOPIC,     /**< (const char *) Topic name */
+        RD_KAFKA_VTYPE_RKT,       /**< (rd_kafka_topic_t *) Topic handle */
+        RD_KAFKA_VTYPE_PARTITION, /**< (int32_t) Partition */
+        RD_KAFKA_VTYPE_VALUE,     /**< (void *, size_t) Message value (payload)*/
+        RD_KAFKA_VTYPE_KEY,       /**< (void *, size_t) Message key */
+        RD_KAFKA_VTYPE_OPAQUE,    /**< (void *) Application opaque */
+        RD_KAFKA_VTYPE_MSGFLAGS,  /**< (int) RD_KAFKA_MSG_F_.. flags */
+        RD_KAFKA_VTYPE_TIMESTAMP, /**< (int64_t) Milliseconds since epoch UTC */
+}
 
 /**
  * @name Kafka messages
@@ -709,7 +752,7 @@ const(char)  * rd_kafka_message_errstr(const rd_kafka_message_t *rkmessage) {
  *
  * The timestamp is the number of milliseconds since the epoch (UTC).
  *
- * \p tstype is updated to indicate the type of timestamp.
+ * \p tstype (if not NULL) is updated to indicate the type of timestamp.
  *
  * @returns message timestamp, or -1 if not available.
  *
@@ -792,7 +835,7 @@ rd_kafka_conf_t *rd_kafka_conf_dup(const rd_kafka_conf_t *conf);
 /**
  * @brief Sets a configuration property.
  *
- * \p must have been previously created with rd_kafka_conf_new().
+ * \p conf must have been previously created with rd_kafka_conf_new().
  *
  * Returns \c rd_kafka_conf_res_t to indicate success or failure.
  * In case of failure \p errstr is updated to contain a human readable
@@ -966,6 +1009,12 @@ void rd_kafka_conf_set_throttle_cb (rd_kafka_conf_t *conf,throttle_cb_callback t
  * Or pass \p func as NULL to disable logging.
  *
  * This is the configuration alternative to the deprecated rd_kafka_set_logger()
+ *
+ * @remark The log_cb will be called spontaneously from librdkafka's internal
+ *         threads unless logs have been forwarded to a poll queue through
+ *         \c rd_kafka_set_log_queue().
+ *         An application MUST NOT call any librdkafka APIs or do any prolonged
+ *         work in a non-forwarded \c log_cb.
  */
 
 alias log_cb_callback = extern(D) void function (const rd_kafka_t *rk, int level,const(char)  *fac, const(char)  *buf) nothrow @nogc;
@@ -1007,10 +1056,43 @@ void rd_kafka_conf_set_stats_cb(rd_kafka_conf_t *conf,stats_cb_callback stats_cb
  * Default:
  *  - on linux: racefree CLOEXEC
  *  - others  : non-racefree CLOEXEC
+ *
+ * @remark The callback will be called from an internal librdkafka thread.
  */
 alias socket_cb_callback = extern(D) int function(int domain, int type,int protocol,void *opaque) nothrow @nogc;
 void rd_kafka_conf_set_socket_cb(rd_kafka_conf_t *conf, socket_cb_callback socket_cb);
 
+
+/**
+ * @brief Set connect callback.
+ *
+ * The connect callback is responsible for connecting socket \p sockfd
+ * to peer address \p addr.
+ * The \p id field contains the broker identifier.
+ *
+ * \p connect_cb shall return 0 on success (socket connected) or an error
+ * number (errno) on error.
+ *
+ * @remark The callback will be called from an internal librdkafka thread.
+ */
+void
+rd_kafka_conf_set_connect_cb (rd_kafka_conf_t *conf,
+                              int function(int sockfd,
+                                                 const sockaddr *addr,
+                                                 int addrlen,
+                                                 const char* id,
+                                                 void* opaque) connect_cb);
+
+/**
+ * @brief Set close socket callback.
+ *
+ * Close a socket (optionally opened with socket_cb()).
+ *
+ * @remark The callback will be called from an internal librdkafka thread.
+ */
+void
+rd_kafka_conf_set_closesocket_cb (rd_kafka_conf_t* conf,
+                                  int function(int sockfd, void* opaque) closesocket_cb);
 
 version(Windows)
 {
@@ -1028,6 +1110,8 @@ else
  * Default:
  *  - on linux: racefree CLOEXEC
  *  - others  : non-racefree CLOEXEC
+ *
+ * @remark The callback will be called from an internal librdkafka thread.
  */
 	alias open_cb_callback = extern(D) int function (const(char)  *pathname,int flags, mode_t mode,void *opaque) nothrow @nogc;
 	void rd_kafka_conf_set_open_cb (rd_kafka_conf_t *conf,open_cb_callback open_cb);
@@ -1348,8 +1432,12 @@ rd_kafka_topic_t *rd_kafka_topic_new(rd_kafka_t *rk, const(char)  *topic, rd_kaf
 
 
 /**
- * @brief Destroy topic handle previously created with `rd_kafka_topic_new()`.
- * @remark MUST NOT be used for internally created topics (topic_new0())
+ * @brief Loose application's topic handle refcount as previously created
+ *        with `rd_kafka_topic_new()`.
+ *
+ * @remark Since topic objects are refcounted (both internally and for the app)
+ *         the topic object might not actually be destroyed by this call,
+ *         but the application must consider the object destroyed.
  */
 
 void rd_kafka_topic_destroy(rd_kafka_topic_t *rkt);
@@ -1477,7 +1565,28 @@ rd_kafka_get_watermark_offsets (rd_kafka_t *rk,
 				const(char)  *topic, int32_t partition,
 				int64_t *low, int64_t *high);
 
-
+/**
+ * @brief Look up the offsets for the given partitions by timestamp.
+ *
+ * The returned offset for each partition is the earliest offset whose
+ * timestamp is greater than or equal to the given timestamp in the
+ * corresponding partition.
+ *
+ * The timestamps to query are represented as \c offset in \p offsets
+ * on input, and \c offset will contain the offset on output.
+ *
+ * The function will block for at most \p timeout_ms milliseconds.
+ *
+ * @remark Duplicate Topic+Partitions are not supported.
+ * @remark Per-partition errors may be returned in \c rd_kafka_topic_partition_t.err
+ *
+ * @returns an error code for general errors, else RD_KAFKA_RESP_ERR_NO_ERROR
+ *          in which case per-partition errors might be set.
+ */
+rd_kafka_resp_err_t
+rd_kafka_offsets_for_times (rd_kafka_t* rk,
+                            rd_kafka_topic_partition_list_t* offsets,
+                            int timeout_ms);
 
 /**
  * @brief Free pointer returned by librdkafka
@@ -1548,15 +1657,49 @@ rd_kafka_queue_t *rd_kafka_queue_get_main (rd_kafka_t *rk);
  */
 rd_kafka_queue_t *rd_kafka_queue_get_consumer (rd_kafka_t *rk);
 
-
+/**
+ * @returns a reference to the partition's queue, or NULL if
+ *          partition is invalid.
+ *
+ * Use rd_kafka_queue_destroy() to loose the reference.
+ *
+ * @remark rd_kafka_queue_destroy() MUST be called on this queue
+ * 
+ * @remark This function only works on consumers.
+ */
+rd_kafka_queue_t *rd_kafka_queue_get_partition (rd_kafka_t* rk,
+                                                const char* topic,
+                                                int32_t partition);
 /**
  * @brief Forward/re-route queue \p src to \p dst.
  * If \p dst is \c NULL the forwarding is removed.
  *
  * The internal refcounts for both queues are increased.
+ * 
+ * @remark Regardless of whether \p dst is NULL or not, after calling this
+ *         function, \p src will not forward it's fetch queue to the consumer
+ *         queue.
  */
 void rd_kafka_queue_forward (rd_kafka_queue_t *src, rd_kafka_queue_t *dst);
 
+/**
+ * @brief Forward librdkafka logs (and debug) to the specified queue
+ *        for serving with one of the ..poll() calls.
+ *
+ *        This allows an application to serve log callbacks (\c log_cb)
+ *        in its thread of choice.
+ *
+ * @param rkqu Queue to forward logs to. If the value is NULL the logs
+ *        are forwarded to the main queue.
+ *
+ * @remark The configuration property \c log.queue MUST also be set to true.
+ *
+ * @remark librdkafka maintains its own reference to the provided queue.
+ *
+ * @returns RD_KAFKA_RESP_ERR_NO_ERROR on success or an error code on error.
+ */
+rd_kafka_resp_err_t rd_kafka_set_log_queue (rd_kafka_t* rk,
+                                            rd_kafka_queue_t* rkqu);
 
 /**
  * @returns the current number of elements in queue.
@@ -1881,6 +2024,10 @@ rd_kafka_resp_err_t rd_kafka_offset_store(rd_kafka_topic_t *rkt,
  * any topic name in the \p topics list that is prefixed with \c \"^\" will
  * be regex-matched to the full list of topics in the cluster and matching
  * topics will be added to the subscription list.
+ *
+ * @returns RD_KAFKA_RESP_ERR_NO_ERROR on success or
+ *          RD_KAFKA_RESP_ERR__INVALID_ARG if list is empty, contains invalid
+ *          topics or regexes.
  */
  rd_kafka_resp_err_t
 rd_kafka_subscribe (rd_kafka_t *rk,
@@ -1995,9 +2142,8 @@ rd_kafka_assignment (rd_kafka_t *rk,
  * is done, returning the resulting success or error code.
  *
  * If a rd_kafka_conf_set_offset_commit_cb() offset commit callback has been
- * configured:
- *  * if async: callback will be enqueued for a future call to rd_kafka_poll().
- *  * if !async: callback will be called from rd_kafka_commit()
+ * configured the callback will be enqueued for a future call to
+ * rd_kafka_poll(), rd_kafka_consumer_poll() or similar.
  */
  rd_kafka_resp_err_t
 rd_kafka_commit (rd_kafka_t *rk, const rd_kafka_topic_partition_list_t *offsets,
@@ -2169,7 +2315,17 @@ int rd_kafka_produce(rd_kafka_topic_t *rkt, int32_t partition,
 		      const (void) *key, size_t keylen,
 		      void *msg_opaque);
 
-
+/**
+ * @brief Produce and send a single message to broker.
+ *
+ * The message is defined by a va-arg list using \c rd_kafka_vtype_t
+ * tag tuples which must be terminated with a single \c RD_KAFKA_V_END.
+ *
+ * @returns \c RD_KAFKA_RESP_ERR_NO_ERROR on success, else an error code.
+ *
+ * @sa rd_kafka_produce, RD_KAFKA_V_END
+ */
+rd_kafka_resp_err_t rd_kafka_producev (rd_kafka_t *rk, ...);
 
 /**
  * @brief Produce multiple messages.
@@ -2721,5 +2877,15 @@ rd_kafka_event_topic_partition (rd_kafka_event_t *rkev);
  * @remark Use rd_kafka_event_destroy() to free the event.
  */
 rd_kafka_event_t *rd_kafka_queue_poll (rd_kafka_queue_t *rkqu, int timeout_ms);
+
+/**
+* @brief Poll a queue for events served through callbacks for max \p timeout_ms.
+*
+* @returns the number of events served.
+*
+* @remark This API must only be used for queues with callbacks registered
+*         for all expected event types. E.g., not a message queue.
+*/
+int rd_kafka_queue_poll_callback (rd_kafka_queue_t* rkqu, int timeout_ms);
 
 /**@}*/
