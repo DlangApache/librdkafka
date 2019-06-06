@@ -52,7 +52,9 @@ import core.sys.posix.sys.types;
 //#include <sys/types.h>
 version(Windows)
 {
-	import core.sys.windows.basetsd;
+	import core.sys.windows.basetsd: SSIZE_T;
+	import core.sys.windows.winsock2: sockaddr;
+	alias ssize_t = SSIZE_T;
 }
 else
 {
